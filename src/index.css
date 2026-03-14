@@ -1,0 +1,58 @@
+@import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;600;700&family=Source+Sans+3:wght@300;400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: #FAFAF8;
+    --foreground: #1A1A1A;
+    --muted: #F5F3F0;
+    --muted-foreground: #6B6B6B;
+    --accent: #B8860B;
+    --accent-secondary: #D4A84B;
+    --accent-foreground: #FFFFFF;
+    --border: #E8E4DF;
+    --card: #FFFFFF;
+    --ring: #B8860B;
+  }
+
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground font-sans;
+    font-feature-settings: "rlig" 1, "calt" 1;
+    letter-spacing: 0.01em;
+  }
+
+  h1, h2, h3, h4, h5, h6 {
+    @apply font-serif;
+  }
+}
+
+@layer components {
+  .small-caps {
+    @apply font-mono text-xs font-medium uppercase tracking-wider;
+  }
+
+  .rule-line {
+    @apply h-px bg-border;
+  }
+
+  .section-label {
+    @apply flex items-center gap-4 mb-6;
+  }
+
+  .section-label-text {
+    @apply small-caps text-accent;
+  }
+}
+
+@layer utilities {
+  .text-balance {
+    text-wrap: balance;
+  }
+}
