@@ -12,6 +12,8 @@ dist-ssr
 
 # Database files (contains user data)
 *.db
+*.db-shm
+*.db-wal
 *.sqlite
 *.sqlite3
 

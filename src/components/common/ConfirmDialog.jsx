@@ -1,4 +1,4 @@
-const ConfirmDialog = ({ isOpen, title, message, onConfirm, onCancel }) => {
+const ConfirmDialog = ({ isOpen, title, message, onConfirm, onCancel, confirmText = '确认', cancelText = '取消', confirmDanger = false }) => {
   if (!isOpen) return null;
 
   return (
@@ -21,13 +21,17 @@ const ConfirmDialog = ({ isOpen, title, message, onConfirm, onCancel }) => {
             onClick={onCancel}
             className="px-4 py-2 rounded-md font-sans text-sm font-medium bg-muted text-foreground hover:bg-border transition-colors"
           >
-            取消
+            {cancelText}
           </button>
           <button
             onClick={onConfirm}
-            className="px-4 py-2 rounded-md font-sans text-sm font-medium bg-red-600 text-white hover:bg-red-700 transition-colors"
+            className={`px-4 py-2 rounded-md font-sans text-sm font-medium transition-colors ${
+              confirmDanger
+                ? 'bg-red-600 text-white hover:bg-red-700'
+                : 'bg-accent text-accent-foreground hover:bg-accent-secondary'
+            }`}
           >
-            确认清除
+            {confirmText}
           </button>
         </div>
       </div>

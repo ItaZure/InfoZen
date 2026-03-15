@@ -10,6 +10,9 @@ import LearningLog from '../components/chat/LearningLog';
 import NotesEditor from '../components/chat/NotesEditor';
 import ImagePreview from '../components/chat/ImagePreview';
 import ImageModal from '../components/chat/ImageModal';
+import copyIcon from '../assets/icons/copy.png';
+import refreshIcon from '../assets/icons/refresh.png';
+import deleteIcon from '../assets/icons/delete.png';
 
 class MessageErrorBoundary extends Component {
   constructor(props) { super(props); this.state = { hasError: false }; }
@@ -77,8 +80,9 @@ const markdownComponents = {
 };
 
 const Chat = () => {
-  const [selectedTopic, setSelectedTopic] = useState('产品技术');
+  const [selectedTopic, setSelectedTopic] = useState('自由主题');
   const [topicData, setTopicData] = useState({
+    '自由主题': { messages: [], tree: [], counter: 0, notes: '', logs: [] },
     '产品技术': { messages: [], tree: [], counter: 0, notes: '', logs: [] },
     '哲学': { messages: [], tree: [], counter: 0, notes: '', logs: [] },
     '商业': { messages: [], tree: [], counter: 0, notes: '', logs: [] },
@@ -92,16 +96,20 @@ const Chat = () => {
   const [logViewMode, setLogViewMode] = useState('tree'); // 'tree' 或 'log'
   const [copiedMessageId, setCopiedMessageId] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
+  const [streamingTopic, setStreamingTopic] = useState(null); // 追踪正在流式回复的话题
   const [showSettings, setShowSettings] = useState(false);
   const [thinkingLevel, setThinkingLevel] = useState('low');
   const [webSearch, setWebSearch] = useState(false);
   const [showClearConfirm, setShowClearConfirm] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState(null);
+  const [isUpdatingLog, setIsUpdatingLog] = useState(false);
   const settingsRef = useRef(null);
   const inputRef = useRef(null);
   const messagesEndRef = useRef(null);
   const messageRefs = useRef({});
 
-  const topics = ['产品技术', '哲学', '商业', '英语'];
+  const topics = ['自由主题', '产品技术', '哲学', '商业', '英语'];
   const currentData = topicData[selectedTopic];
 
   // 自动滚动到底部
@@ -132,12 +140,60 @@ const Chat = () => {
     });
   };
 
+  // 加载话题数据
+  const loadTopicData = async (topic) => {
+    try {
+      const res = await fetch(`/api/topics/${encodeURIComponent(topic)}`);
+      if (!res.ok) return;
+      const data = await res.json();
+      setTopicData((prev) => {
+        // 检测是否有正在进行的流式回复
+        // 如果当前正在加载且话题匹配，说明有未持久化的消息，不应该被覆盖
+        const hasOngoingStream = isLoading && streamingTopic === topic;
+
+        if (hasOngoingStream) {
+          // 保留前端 state 的 messages 和 tree，只更新其他字段
+          return {
+            ...prev,
+            [topic]: {
+              ...prev[topic],
+              notes: data.notes,
+              logs: data.logs.length > 0 ? data.logs : prev[topic].logs,
+              activityDates: data.activityDates,
+            },
+          };
+        }
+
+        // 没有正在进行的流式回复，正常加载数据
+        return {
+          ...prev,
+          [topic]: {
+            messages: data.messages,
+            tree: data.tree,
+            counter: data.messages.length,
+            notes: data.notes,
+            logs: data.logs.length > 0 ? data.logs : prev[topic].logs,
+            activityDates: data.activityDates,
+          },
+        };
+      });
+    } catch (err) {
+      console.error('Load topic data failed:', err);
+    }
+  };
+
+  // 页面加载时加载当前话题
+  useEffect(() => {
+    loadTopicData(selectedTopic);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
   // 切换主题
   const handleTopicChange = (topic) => {
     setSelectedTopic(topic);
     setSelectedNode(null);
     setHighlightedMessageId(null);
     setPastedImages([]); // 清空图片
+    loadTopicData(topic);
   };
 
   // 获取从根节点到指定节点的路径
@@ -257,6 +313,7 @@ const Chat = () => {
 
     // 流式调用后端 API
     setIsLoading(true);
+    setStreamingTopic(capturedTopic); // 标记正在流式回复的话题
     try {
       const response = await fetch('/api/chat/send', {
         method: 'POST',
@@ -277,6 +334,7 @@ const Chat = () => {
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
       let buffer = '';
+      let accumulatedAiContent = '';
 
       while (true) {
         const { done, value } = await reader.read();
@@ -294,11 +352,13 @@ const Chat = () => {
             const parsed = JSON.parse(data);
             const delta = parsed.choices?.[0]?.delta?.content;
             if (delta) {
+              accumulatedAiContent += delta;
+              // 使用累积的完整内容更新，而不是增量追加
               setTopicData((prev) => {
                 const newData = { ...prev };
                 const topic = { ...newData[capturedTopic] };
                 topic.messages = topic.messages.map((m) =>
-                  m.id === aiMessageId ? { ...m, content: m.content + delta } : m
+                  m.id === aiMessageId ? { ...m, content: accumulatedAiContent } : m
                 );
                 newData[capturedTopic] = topic;
                 return newData;
@@ -306,6 +366,39 @@ const Chat = () => {
             }
           } catch (e) { /* 跳过格式错误的 chunk */ }
         }
+      }
+      // 流式结束后持久化
+      try {
+        await fetch('/api/conversations', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            topicId: capturedTopic,
+            userMessage: {
+              id: userMessageId,
+              content: messageContent,
+              images: userMessage.images,
+              timestamp: userMessage.timestamp instanceof Date
+                ? userMessage.timestamp.toISOString()
+                : String(userMessage.timestamp),
+            },
+            aiMessage: {
+              id: aiMessageId,
+              content: accumulatedAiContent,
+              timestamp: new Date().toISOString(),
+            },
+            treeNode: {
+              id: treeNode.id,
+              parentId: selectedNode || null,
+              label: treeNode.label,
+              content: treeNode.content,
+            },
+          }),
+        });
+        // 持久化成功后重新加载数据，同步树结构
+        await loadTopicData(capturedTopic);
+      } catch (saveErr) {
+        console.error('Save conversation failed:', saveErr);
       }
     } catch (err) {
       console.error('Streaming failed:', err);
@@ -320,6 +413,7 @@ const Chat = () => {
       });
     } finally {
       setIsLoading(false);
+      setStreamingTopic(null); // 清除流式回复标记
     }
   };
 
@@ -395,6 +489,223 @@ const Chat = () => {
     setTimeout(() => setCopiedMessageId(null), 2000);
   };
 
+  // 刷新消息：重新生成 AI 回复
+  const handleRefreshMessage = async (e, aiMessageId) => {
+    e.stopPropagation();
+
+    // 找到对应的树节点
+    const node = findNodeByMessageId(currentData.tree, aiMessageId, 'aiMessageId');
+    if (!node) return;
+
+    // 找到该节点的父节点路径（不包含当前节点）
+    const getParentPath = (tree, targetId, path = []) => {
+      for (const node of tree) {
+        if (node.id === targetId) {
+          return path;
+        }
+        if (node.children && node.children.length > 0) {
+          const found = getParentPath(node.children, targetId, [...path, node]);
+          if (found) return found;
+        }
+      }
+      return null;
+    };
+
+    const parentPath = getParentPath(currentData.tree, node.id) || [];
+
+    // 构造上下文消息（父节点路径）
+    const contextMessages = parentPath.map((n) => {
+      const userMsg = currentData.messages.find((m) => m.id === n.userMessageId);
+      const aiMsg = currentData.messages.find((m) => m.id === n.aiMessageId);
+      return {
+        userContent: userMsg?.content || '',
+        userImages: userMsg?.images || [],
+        aiContent: aiMsg?.content || '',
+      };
+    });
+
+    // 获取用户消息
+    const userMessage = currentData.messages.find((m) => m.id === node.userMessageId);
+    if (!userMessage) return;
+
+    // 清空当前 AI 回复内容
+    setTopicData((prev) => {
+      const newData = { ...prev };
+      const topic = { ...newData[selectedTopic] };
+      const messages = [...topic.messages];
+      const aiMsgIndex = messages.findIndex((m) => m.id === aiMessageId);
+      if (aiMsgIndex !== -1) {
+        messages[aiMsgIndex] = { ...messages[aiMsgIndex], content: '' };
+      }
+      topic.messages = messages;
+      newData[selectedTopic] = topic;
+      return newData;
+    });
+
+    // 重新发送请求
+    setIsLoading(true);
+    try {
+      const response = await fetch('/api/chat/send', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          topicId: selectedTopic,
+          message: userMessage.content,
+          images: userMessage.images || [],
+          parentNodeId: parentPath.length > 0 ? parentPath[parentPath.length - 1].id : null,
+          contextMessages,
+          thinkingLevel,
+          webSearch,
+        }),
+      });
+
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      let accumulatedRefreshContent = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop();
+
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue;
+          const data = line.slice(6).trim();
+          if (data === '[DONE]') continue;
+          try {
+            const parsed = JSON.parse(data);
+            const delta = parsed.choices?.[0]?.delta?.content;
+            if (delta) {
+              accumulatedRefreshContent += delta;
+              setTopicData((prev) => {
+                const newData = { ...prev };
+                const topic = { ...newData[selectedTopic] };
+                const messages = [...topic.messages];
+                const aiMsgIndex = messages.findIndex((m) => m.id === aiMessageId);
+                if (aiMsgIndex !== -1) {
+                  messages[aiMsgIndex] = {
+                    ...messages[aiMsgIndex],
+                    content: messages[aiMsgIndex].content + delta,
+                  };
+                }
+                topic.messages = messages;
+                newData[selectedTopic] = topic;
+                return newData;
+              });
+            }
+          } catch (e) {}
+        }
+      }
+      // 流式结束后更新持久化内容
+      try {
+        await fetch(`/api/conversations/${node.id}/ai-message`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ content: accumulatedRefreshContent }),
+        });
+      } catch (saveErr) {
+        console.error('Update ai-message failed:', saveErr);
+      }
+    } catch (err) {
+      console.error('Refresh message error:', err);
+      alert('刷新失败，请重试');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // 删除消息：删除节点���所有子孙节点
+  const handleDeleteMessage = (e, aiMessageId) => {
+    e.stopPropagation();
+
+    // 找到对应的树节点
+    const node = findNodeByMessageId(currentData.tree, aiMessageId, 'aiMessageId');
+    if (!node) return;
+
+    // 收集该节点及所有子孙节点的消息 ID
+    const collectMessageIds = (node) => {
+      const ids = [node.userMessageId, node.aiMessageId];
+      if (node.children && node.children.length > 0) {
+        for (const child of node.children) {
+          ids.push(...collectMessageIds(child));
+        }
+      }
+      return ids;
+    };
+
+    const messageIdsToDelete = collectMessageIds(node);
+
+    // 保存删除目标信息，显示确认弹窗
+    setDeleteTarget({ node, messageIdsToDelete });
+    setShowDeleteConfirm(true);
+  };
+
+  // 确认删除
+  const confirmDeleteMessage = () => {
+    if (!deleteTarget) return;
+
+    const { node, messageIdsToDelete } = deleteTarget;
+
+    // 找到被删除节点的父节点
+    const findParentNode = (tree, targetId, parent = null) => {
+      for (const n of tree) {
+        if (n.id === targetId) return parent;
+        if (n.children && n.children.length > 0) {
+          const found = findParentNode(n.children, targetId, n);
+          if (found !== undefined) return found;
+        }
+      }
+      return undefined;
+    };
+
+    const parentNode = findParentNode(currentData.tree, node.id);
+
+    setTopicData((prev) => {
+      const newData = { ...prev };
+      const topic = { ...newData[selectedTopic] };
+
+      // 删除消息
+      topic.messages = topic.messages.filter((m) => !messageIdsToDelete.includes(m.id));
+
+      // 从树中删除节点
+      const removeNode = (tree, targetId) => {
+        return tree.filter((n) => {
+          if (n.id === targetId) return false;
+          if (n.children && n.children.length > 0) {
+            n.children = removeNode(n.children, targetId);
+          }
+          return true;
+        });
+      };
+
+      topic.tree = removeNode(topic.tree, node.id);
+      newData[selectedTopic] = topic;
+      return newData;
+    });
+
+    // 更新选中状态：如果有父节点则选中父节点，否则清空
+    if (parentNode) {
+      setSelectedNode(parentNode.id);
+      setHighlightedMessageId(parentNode.aiMessageId);
+    } else {
+      setSelectedNode(null);
+      setHighlightedMessageId(null);
+    }
+
+    setShowDeleteConfirm(false);
+    setDeleteTarget(null);
+
+    // 持久化删除
+    fetch(`/api/conversations/${node.id}`, { method: 'DELETE' })
+      .catch((err) => console.error('Delete conversation failed:', err));
+  };
+
   // 点击消息气泡
   const handleMessageClick = (msg) => {
     let targetNode = null;
@@ -419,6 +730,7 @@ const Chat = () => {
   };
 
   const confirmClearHistory = () => {
+    fetch(`/api/topics/${encodeURIComponent(selectedTopic)}/data`, { method: 'DELETE' }).catch(() => {});
     setTopicData((prev) => {
       const newData = { ...prev };
       newData[selectedTopic] = {
@@ -436,95 +748,46 @@ const Chat = () => {
   };
 
   // 更新学习日志
-  const handleUpdateLogs = () => {
-    setTopicData((prev) => {
-      const newData = { ...prev };
-      const topic = { ...newData[selectedTopic] };
+  const handleUpdateLogs = async () => {
+    setIsUpdatingLog(true);
 
-      // 获取所有未总结的节点
-      const unsummarizedNodes = [];
-      const collectUnsummarized = (nodes) => {
-        for (const node of nodes) {
-          if (!node.summarized) {
-            unsummarizedNodes.push(node);
-          }
-          if (node.children && node.children.length > 0) {
-            collectUnsummarized(node.children);
-          }
-        }
-      };
-      collectUnsummarized(topic.tree);
-
-      if (unsummarizedNodes.length === 0) {
-        alert('没有未总结的对话');
-        return prev;
-      }
-
-      // 按小时分组
-      const groupedByHour = {};
-      unsummarizedNodes.forEach((node) => {
-        // 找到对应的 AI 消息获取时间戳
-        const aiMsg = topic.messages.find(m => m.id === node.aiMessageId);
-        if (aiMsg) {
-          const date = new Date(aiMsg.timestamp);
-          const year = date.getFullYear();
-          const month = String(date.getMonth() + 1).padStart(2, '0');
-          const day = String(date.getDate()).padStart(2, '0');
-          const hour = date.getHours();
-          const hourKey = `${year}-${month}-${day} ${String(hour).padStart(2, '0')}:00-${String(hour + 1).padStart(2, '0')}:00`;
-
-          if (!groupedByHour[hourKey]) {
-            groupedByHour[hourKey] = [];
-          }
-          groupedByHour[hourKey].push(node);
-        }
+    try {
+      const res = await fetch(`/api/topics/${encodeURIComponent(selectedTopic)}/logs/generate`, {
+        method: 'POST',
       });
 
-      // 生成或更新日志
-      const existingLogs = topic.logs || [];
-      const newLogs = [...existingLogs];
+      if (!res.ok) throw new Error('日志生成失败');
+      const { results } = await res.json();
 
-      Object.keys(groupedByHour).forEach((timeRange) => {
-        const count = groupedByHour[timeRange].length;
-        const existingLogIndex = newLogs.findIndex(log => log.timeRange === timeRange);
+      // 更新本地 logs state
+      setTopicData((prev) => {
+        const newData = { ...prev };
+        const t = { ...newData[selectedTopic] };
+        const newLogs = [...(t.logs || [])];
 
-        if (existingLogIndex >= 0) {
-          // 更新现有日志
-          const oldCount = parseInt(newLogs[existingLogIndex].summary.match(/\d+/)[0]);
-          newLogs[existingLogIndex].summary = `该时间段进行了${oldCount + count}次对话`;
-        } else {
-          // 新建日志
-          newLogs.push({
-            timeRange,
-            summary: `该时间段进行了${count}次对话`,
-            timestamp: new Date(),
-          });
-        }
-      });
-
-      // 按时间倒序排列
-      newLogs.sort((a, b) => {
-        const timeA = new Date(a.timeRange.split(' ')[0] + ' ' + a.timeRange.split(' ')[1].split('-')[0]);
-        const timeB = new Date(b.timeRange.split(' ')[0] + ' ' + b.timeRange.split(' ')[1].split('-')[0]);
-        return timeB - timeA;
-      });
-
-      // 标记所有节点为已总结
-      const markSummarized = (nodes) => {
-        for (const node of nodes) {
-          node.summarized = true;
-          if (node.children && node.children.length > 0) {
-            markSummarized(node.children);
+        results.forEach(({ day, summary }) => {
+          const idx = newLogs.findIndex((l) => l.timeRange === day);
+          if (idx >= 0) {
+            newLogs[idx] = { ...newLogs[idx], summary };
+          } else {
+            newLogs.push({ timeRange: day, summary, timestamp: new Date().toISOString() });
           }
-        }
-      };
-      markSummarized(topic.tree);
+        });
 
-      topic.logs = newLogs;
-      newData[selectedTopic] = topic;
+        newLogs.sort((a, b) => b.timeRange.localeCompare(a.timeRange));
+        t.logs = newLogs;
+        newData[selectedTopic] = t;
+        return newData;
+      });
 
-      return newData;
-    });
+      // 重新加载话题数据以同步树状态
+      await loadTopicData(selectedTopic);
+    } catch (err) {
+      alert('日志生成失败，请稍后重试');
+      console.error(err);
+    }
+
+    setIsUpdatingLog(false);
   };
 
   return (
@@ -627,22 +890,39 @@ const Chat = () => {
                           ))}
                         </div>
                       )}
-                      {/* AI 回复显示时间 + 复制按钮 */}
+                      {/* AI 回复显示时间 + 操作按钮 */}
                       {msg.type === 'ai' && (
                         <div className="mt-3 pt-2 border-t border-border/50 flex items-center justify-between">
                           <span className="text-xs text-muted-foreground font-mono">
                             {formatTime(msg.timestamp)}
                           </span>
-                          <button
-                            onClick={(e) => handleCopy(e, msg.content, msg.id)}
-                            className={`text-xs font-sans px-2 py-0.5 rounded opacity-0 group-hover:opacity-100 transition-all duration-150 ${
-                              copiedMessageId === msg.id
-                                ? 'text-green-600'
-                                : 'text-muted-foreground hover:text-foreground'
-                            }`}
-                          >
-                            {copiedMessageId === msg.id ? '已复制' : '复制'}
-                          </button>
+                          <div className="flex gap-2 items-center">
+                            <button
+                              onClick={(e) => handleRefreshMessage(e, msg.id)}
+                              className="opacity-0 group-hover:opacity-100 transition-all duration-150 hover:scale-110"
+                              title="重新生成"
+                            >
+                              <img src={refreshIcon} alt="刷新" className="w-4 h-4" />
+                            </button>
+                            <button
+                              onClick={(e) => handleDeleteMessage(e, msg.id)}
+                              className="opacity-0 group-hover:opacity-100 transition-all duration-150 hover:scale-110"
+                              title="删除对话"
+                            >
+                              <img src={deleteIcon} alt="删除" className="w-4 h-4" />
+                            </button>
+                            <button
+                              onClick={(e) => handleCopy(e, msg.content, msg.id)}
+                              className="opacity-0 group-hover:opacity-100 transition-all duration-150 hover:scale-110"
+                              title={copiedMessageId === msg.id ? '已复制' : '复制'}
+                            >
+                              <img
+                                src={copyIcon}
+                                alt="复制"
+                                className={`w-4 h-4 ${copiedMessageId === msg.id ? 'opacity-50' : ''}`}
+                              />
+                            </button>
+                          </div>
                         </div>
                       )}
                     </div>
@@ -758,7 +1038,25 @@ const Chat = () => {
             ) : (
               <LearningLog
                 logs={currentData.logs || []}
+                activityDates={currentData.activityDates || []}
+                unsummarizedCount={(() => {
+                  let count = 0;
+                  const count_ = (nodes) => { for (const n of nodes) { if (!n.summarized) count++; if (n.children?.length) count_(n.children); } };
+                  count_(currentData.tree || []);
+                  return count;
+                })()}
                 onUpdateLogs={handleUpdateLogs}
+                isUpdating={isUpdatingLog}
+                topicId={selectedTopic}
+                onLogsChange={(newLogs) => {
+                  setTopicData((prev) => {
+                    const newData = { ...prev };
+                    const topic = { ...newData[selectedTopic] };
+                    topic.logs = newLogs;
+                    newData[selectedTopic] = topic;
+                    return newData;
+                  });
+                }}
               />
             )}
           </div>
@@ -799,6 +1097,22 @@ const Chat = () => {
         message={`确定要清除【${selectedTopic}】主题下的所有对话记录吗？此操作不可恢复。对话树和未总结的节点也将被清空。`}
         onConfirm={confirmClearHistory}
         onCancel={() => setShowClearConfirm(false)}
+        confirmText="确认清除"
+        confirmDanger={true}
+      />
+
+      {/* 删除对话确认对话框 */}
+      <ConfirmDialog
+        isOpen={showDeleteConfirm}
+        title="删除对话"
+        message={`确定要删除对话"${deleteTarget?.node?.label}"及其所有子对话吗？此操作不可恢复。`}
+        onConfirm={confirmDeleteMessage}
+        onCancel={() => {
+          setShowDeleteConfirm(false);
+          setDeleteTarget(null);
+        }}
+        confirmText="确认删除"
+        confirmDanger={true}
       />
     </div>
   );

@@ -51,7 +51,7 @@ const Breadcrumb = ({ path, onNodeClick, messageCount = 0 }) => {
                   px-4 py-2 rounded-md font-sans text-sm
                   transition-all duration-200
                   ${index === displayPath.length - 1
-                    ? 'bg-accent text-accent-foreground font-medium'
+                    ? 'bg-card text-accent border-2 border-accent font-medium'
                     : `bg-card text-foreground border ${
                         node.summarized
                           ? 'border-green-400 hover:border-green-500'

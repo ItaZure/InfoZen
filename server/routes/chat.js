@@ -1,12 +1,19 @@
 import { Router } from 'express';
+import { PROMPTS } from '../index.js';
 
 const router = Router();
 
 router.post('/send', async (req, res) => {
   try {
-    const { message, images = [], parentNodeId, contextMessages = [], thinkingLevel = 'low', webSearch = false } = req.body;
+    const { message, images = [], parentNodeId, contextMessages = [], thinkingLevel = 'low', webSearch = false, topicId } = req.body;
 
-const llmMessages = [];
+    const llmMessages = [];
+
+    // 添加 system prompt（如果该话题有配置）
+    if (topicId && PROMPTS[topicId]) {
+      llmMessages.push({ role: 'system', content: PROMPTS[topicId] });
+    }
+
     for (const ctx of contextMessages) {
       llmMessages.push({ role: 'user', content: buildContent(ctx.userContent, ctx.userImages || []) });
       llmMessages.push({ role: 'assistant', content: ctx.aiContent });
