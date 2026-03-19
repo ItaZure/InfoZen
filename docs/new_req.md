@@ -1,3 +1,135 @@
+## 03-19 拾慧页面
+
+### 需求描述
+拾慧页面用于阅读并总结英文资讯网页，支持快捷跳转常用网站、粘贴链接自动生成中文摘要、历史摘要卡片列表管理。
+
+---
+
+### 功能详情
+
+#### 1. 快捷网站按钮
+
+- 按钮行展示常用资讯网站，点击在新标签页打开
+- 默认内置：Hacker News（`https://news.ycombinator.com`）、Karpathy's Blog（`https://karpathy.bearblog.dev/blog/`）
+- 支持用户自定义添加：点击「+ 添加」按钮，弹出小表单，填写名称和 URL，保存到数据库
+- 快捷按钮数据存储在数据库 `quick_links` 表，支持增删
+
+#### 2. URL 输入框
+
+- 单行输入框，placeholder：「粘贴链接，按 Enter 提交」
+- 按 Enter 或点击确认按钮触发提交
+- 提交后立即在卡片列表顶部插入一张「加载中」状态的卡片
+- 加载中卡片：顶部状态栏显示域名 + loading 动画，body 区域显示 skeleton
+
+#### 3. 摘要卡片列表
+
+**布局：**
+- 卡片按创建时间倒序排列（由近及远）
+- 日期标签显示在卡片外部，同一天的文章共用一个日期标签
+- 懒加载，每次加载 10 条
+
+**卡片结构：**
+```
+┌──────────────────────────────────┐
+│ The Bitter Lesson          [↗][×]│  ← 顶部状态栏（始终可见）
+│ 苦涩的教训                       │  ← 中文标题
+├──────────────────────────────────┤
+│ • 要点一...                      │  ← 折叠态：固定高度，内容截断
+│ • 要点二...                      │
+└──────────────────────────────────┘
+```
+
+- 顶部状态栏：英文原标题（无则只显示中文标题）+ 右侧 [↗] 跳转原链接、[×] 删除按钮，始终可见
+- 折叠态：固定高度，摘要要点截断显示
+- 展开态：点击卡片 body 区域切换，自适应高度显示全文
+- 删除：点击 [×] 直接删除（无需二次确认），从列表移除并调后端删除接口
+
+#### 4. 后端抓取与总结流程
+
+1. 前端 POST 链接到后端
+2. 后端用 `axios` 抓取网页 HTML，`cheerio` 解析提取正文
+3. 将正文传给 DeepSeek（`deepseek-chat`）生成中文摘要
+4. 摘要写入数据库，返回给前端
+5. 前端将加载中卡片替换为正式卡片
+
+**DeepSeek 提示词：**
+```
+你是一位专业的文章摘要助手。我会给你一篇英文文章的内容，请用中文为我生成结构化摘要。
+
+要求：
+1. 如果原文有英文标题，第一行输出英文原标题，第二行输出中文翻译标���
+   如果原文没有标题，只输出一行中文概括标题（15字以内）
+2. 空一行后，用 3-6 条要点总结文章核心内容，每条 1-2 句话
+3. 要点用「• 」开头
+4. 语言简洁，保留关键数据、人名、专有名词（可保留英文原文）
+5. 不要输出"摘要："等前缀，直接输出内容
+
+文章内容：
+{article_content}
+```
+
+---
+
+### 新增后端接口
+
+**POST /api/wisdom/summarize**
+- 请求体：`{ url: string }`
+- 后端抓取网页正文，调 DeepSeek 生成摘要
+- 写入 `articles` 表
+- 返回：`{ id, url, title_en, title_zh, summary, created_at }`
+
+**GET /api/wisdom/articles**
+- 查询参数：`page`（默认 1），`limit`（默认 10）
+- 返回：`{ articles: [...], hasMore: boolean }`
+
+**DELETE /api/wisdom/articles/:id**
+- 删除指定摘要记录
+- 返回：`{ success: true }`
+
+**GET /api/wisdom/quick-links**
+- 返回所有快捷链接
+
+**POST /api/wisdom/quick-links**
+- 请求体：`{ name: string, url: string }`
+- 新增快捷链接
+
+**DELETE /api/wisdom/quick-links/:id**
+- 删除快捷链接
+
+---
+
+### 表结构
+
+**articles 表**
+```sql
+id          INTEGER PRIMARY KEY AUTOINCREMENT
+url         TEXT NOT NULL
+title_en    TEXT
+title_zh    TEXT NOT NULL
+summary     TEXT NOT NULL
+created_at  DATETIME DEFAULT CURRENT_TIMESTAMP
+```
+
+**quick_links 表**
+```sql
+id          INTEGER PRIMARY KEY AUTOINCREMENT
+name        TEXT NOT NULL
+url         TEXT NOT NULL
+sort_order  INTEGER DEFAULT 0
+created_at  DATETIME DEFAULT CURRENT_TIMESTAMP
+```
+
+---
+
+### 边界情况
+
+- 抓取失败（网络超时、反爬）：加载中卡片变为错误态，显示「抓取失败，请检查链接」，可手动关闭
+- DeepSeek 调用失败：同上，显示「摘要生成失败，请稍后重试」
+- 重复提交同一 URL：不做去重，允许多次总结同一文章
+- 输入框为空时不触发提交
+
+---
+
 ## 03-16 学习日志功能升级
 
 ### 需求描述

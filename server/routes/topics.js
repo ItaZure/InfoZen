@@ -51,7 +51,7 @@ router.get('/:topicId', (req, res) => {
       `SELECT time_range AS timeRange, summary, created_at AS timestamp
        FROM logs
        WHERE topic_id = ? AND deleted_at IS NULL
-       ORDER BY created_at ASC`
+       ORDER BY time_range DESC`
     )
     .all(topicId);
 

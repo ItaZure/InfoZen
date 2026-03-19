@@ -9,6 +9,7 @@ import db from './db.js'; // 导入 db 实例用于启动检查
 import chatRoutes from './routes/chat.js';
 import topicsRoutes from './routes/topics.js';
 import conversationsRoutes from './routes/conversations.js';
+import wisdomRoutes from './routes/wisdom.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -55,6 +56,7 @@ app.use(express.json({ limit: '50mb' }));
 app.use('/api/chat', chatRoutes);
 app.use('/api/topics', topicsRoutes);
 app.use('/api/conversations', conversationsRoutes);
+app.use('/api/wisdom', wisdomRoutes);
 
 const PORT = 10101;
 app.listen(PORT, () => {

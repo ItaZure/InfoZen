@@ -166,3 +166,114 @@
 |--------|------|
 | 400 | `content` 字段缺失 |
 | 404 | 节点不存在或已删除 |
+
+---
+
+## POST /api/wisdom/summarize
+
+抓取网页正文并用 DeepSeek 生成中文摘要。
+
+**请求体：**
+```json
+{ "url": "string" }
+```
+
+**响应：**
+```json
+{
+  "id": "integer",
+  "url": "string",
+  "title_en": "string | null",
+  "title_zh": "string",
+  "summary": "string",
+  "created_at": "ISO8601"
+}
+```
+
+**错误码：**
+| 状态码 | error | 说明 |
+|--------|-------|------|
+| 400 | — | `url` 字段缺失 |
+| 500 | `FETCH_FAILED` | 网页抓取失败 |
+| 500 | `AI_FAILED` | DeepSeek 调用失败 |
+
+---
+
+## GET /api/wisdom/articles
+
+分页获取历史摘要列表，按创建时间倒序。
+
+**Query Params：**
+- `page`：页码，默认 1
+- `limit`：每页条数，默认 10，最大 50
+
+**响应：**
+```json
+{
+  "articles": [
+    {
+      "id": "integer",
+      "url": "string",
+      "title_en": "string | null",
+      "title_zh": "string",
+      "summary": "string",
+      "created_at": "ISO8601"
+    }
+  ],
+  "hasMore": "boolean"
+}
+```
+
+---
+
+## DELETE /api/wisdom/articles/:id
+
+删除指定摘要（硬删除）。
+
+**响应：**
+```json
+{ "success": true }
+```
+
+**错误码：**
+| 状态码 | 说明 |
+|--------|------|
+| 404 | 文章不存在 |
+
+---
+
+## GET /api/wisdom/quick-links
+
+获取所有快捷链接，按 sort_order 升序。
+
+**响应：**
+```json
+{ "links": [{ "id": "integer", "name": "string", "url": "string", "sort_order": "integer" }] }
+```
+
+---
+
+## POST /api/wisdom/quick-links
+
+新增快捷链接。
+
+**请求体：**
+```json
+{ "name": "string", "url": "string" }
+```
+
+**响应：**
+```json
+{ "id": "integer", "name": "string", "url": "string" }
+```
+
+---
+
+## DELETE /api/wisdom/quick-links/:id
+
+删除快捷链接。
+
+**响应：**
+```json
+{ "success": true }
+```

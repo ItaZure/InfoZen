@@ -53,3 +53,30 @@
 | summary | TEXT NOT NULL | 该时间段对话摘要 |
 | created_at | TEXT NOT NULL | 创建时间 ISO8601 |
 | deleted_at | TEXT | 软删除时间，NULL 表示未删除 |
+
+---
+
+## articles
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| id | INTEGER PRIMARY KEY AUTOINCREMENT | 文章 id |
+| url | TEXT NOT NULL | 原文链接 |
+| title_en | TEXT | 英文原标题（无则为 NULL） |
+| title_zh | TEXT NOT NULL | 中文标题 |
+| summary | TEXT NOT NULL | AI 生成的中文摘要 |
+| created_at | TEXT NOT NULL | 创建时间 ISO8601 |
+
+---
+
+## quick_links
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| id | INTEGER PRIMARY KEY AUTOINCREMENT | 链接 id |
+| name | TEXT NOT NULL | 显示名称 |
+| url | TEXT NOT NULL | 链接地址 |
+| sort_order | INTEGER DEFAULT 0 | 排序权重，升序 |
+| created_at | TEXT NOT NULL | 创建时间 ISO8601 |
+
+预置数据：Hacker News、Karpathy's Blog。

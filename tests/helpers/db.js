@@ -49,6 +49,23 @@ export function createTestDb() {
       deleted_at TEXT,
       UNIQUE(topic_id, time_range)
     );
+
+    CREATE TABLE IF NOT EXISTS articles (
+      id         INTEGER PRIMARY KEY AUTOINCREMENT,
+      url        TEXT NOT NULL,
+      title_en   TEXT,
+      title_zh   TEXT NOT NULL,
+      summary    TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS quick_links (
+      id         INTEGER PRIMARY KEY AUTOINCREMENT,
+      name       TEXT NOT NULL,
+      url        TEXT NOT NULL,
+      sort_order INTEGER DEFAULT 0,
+      created_at TEXT NOT NULL
+    );
   `);
 
   // 预置 5 个话题（与生产环境一致）

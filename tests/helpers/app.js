@@ -346,6 +346,133 @@ function createConversationsRouter(db) {
   return router;
 }
 
+// ---------- wisdom 路由（内联，注入 db） ----------
+
+function parseAISummary(text) {
+  const lines = text.trim().split('\n');
+  let title_en = null;
+  let title_zh = '';
+  let summaryStart = 0;
+
+  const firstLine = lines[0]?.trim() ?? '';
+  const secondLine = lines[1]?.trim() ?? '';
+  const hasChinese = (s) => /[\u4e00-\u9fff]/.test(s);
+
+  if (firstLine && !hasChinese(firstLine) && secondLine && hasChinese(secondLine)) {
+    title_en = firstLine;
+    title_zh = secondLine;
+    summaryStart = 2;
+  } else if (firstLine && hasChinese(firstLine)) {
+    title_zh = firstLine;
+    summaryStart = 1;
+  } else {
+    title_zh = firstLine;
+    summaryStart = 1;
+  }
+
+  while (summaryStart < lines.length && lines[summaryStart].trim() === '') {
+    summaryStart++;
+  }
+
+  const summary = lines.slice(summaryStart).join('\n').trim();
+  return { title_en, title_zh, summary };
+}
+
+function createWisdomRouter(db) {
+  const router = Router();
+
+  // POST /api/wisdom/summarize
+  router.post('/summarize', async (req, res) => {
+    const { url } = req.body;
+    if (!url) return res.status(400).json({ error: 'url is required' });
+
+    // 抓取网页（测试中由 global.fetch mock 控制）
+    let html;
+    try {
+      const response = await global.fetch(url, { timeout: 10000 });
+      if (!response.ok) throw new Error('fetch failed');
+      html = await response.text();
+    } catch {
+      return res.status(500).json({ error: 'FETCH_FAILED' });
+    }
+
+    // 调用 AI（测试中由 global.fetch mock 控制）
+    let aiText;
+    try {
+      const aiRes = await global.fetch(process.env.DEEPSEEK_API_URL || 'http://mock-ai', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      if (!aiRes.ok) throw new Error(await aiRes.text());
+      const data = await aiRes.json();
+      aiText = data.choices?.[0]?.message?.content ?? '';
+    } catch {
+      return res.status(500).json({ error: 'AI_FAILED' });
+    }
+
+    const { title_en, title_zh, summary } = parseAISummary(aiText);
+    const now = new Date().toISOString();
+    const result = db
+      .prepare(`INSERT INTO articles (url, title_en, title_zh, summary, created_at) VALUES (?, ?, ?, ?, ?)`)
+      .run(url, title_en, title_zh, summary, now);
+
+    res.json({ id: result.lastInsertRowid, url, title_en, title_zh, summary, created_at: now });
+  });
+
+  // GET /api/wisdom/articles
+  router.get('/articles', (req, res) => {
+    const page = Math.max(1, parseInt(req.query.page) || 1);
+    const limit = Math.min(50, parseInt(req.query.limit) || 10);
+    const offset = (page - 1) * limit;
+    const articles = db
+      .prepare(`SELECT id, url, title_en, title_zh, summary, created_at FROM articles ORDER BY created_at DESC LIMIT ? OFFSET ?`)
+      .all(limit + 1, offset);
+    const hasMore = articles.length > limit;
+    res.json({ articles: articles.slice(0, limit), hasMore });
+  });
+
+  // DELETE /api/wisdom/articles/:id
+  router.delete('/articles/:id', (req, res) => {
+    const { id } = req.params;
+    const article = db.prepare(`SELECT id FROM articles WHERE id = ?`).get(id);
+    if (!article) return res.status(404).json({ error: 'Not found' });
+    db.prepare(`DELETE FROM articles WHERE id = ?`).run(id);
+    res.json({ success: true });
+  });
+
+  // GET /api/wisdom/quick-links
+  router.get('/quick-links', (req, res) => {
+    const links = db
+      .prepare(`SELECT id, name, url, sort_order FROM quick_links ORDER BY sort_order ASC, id ASC`)
+      .all();
+    res.json({ links });
+  });
+
+  // POST /api/wisdom/quick-links
+  router.post('/quick-links', (req, res) => {
+    const { name, url } = req.body;
+    if (!name || !url) return res.status(400).json({ error: 'name and url are required' });
+    const now = new Date().toISOString();
+    const maxOrder = db.prepare(`SELECT MAX(sort_order) AS m FROM quick_links`).get();
+    const sort_order = (maxOrder?.m ?? -1) + 1;
+    const result = db
+      .prepare(`INSERT INTO quick_links (name, url, sort_order, created_at) VALUES (?, ?, ?, ?)`)
+      .run(name, url, sort_order, now);
+    res.json({ id: result.lastInsertRowid, name, url });
+  });
+
+  // DELETE /api/wisdom/quick-links/:id
+  router.delete('/quick-links/:id', (req, res) => {
+    const { id } = req.params;
+    const link = db.prepare(`SELECT id FROM quick_links WHERE id = ?`).get(id);
+    if (!link) return res.status(404).json({ error: 'Not found' });
+    db.prepare(`DELETE FROM quick_links WHERE id = ?`).run(id);
+    res.json({ success: true });
+  });
+
+  return router;
+}
+
 // ---------- app 工厂 ----------
 
 export function createApp(db) {
@@ -353,5 +480,6 @@ export function createApp(db) {
   app.use(express.json({ limit: '50mb' }));
   app.use('/api/topics', createTopicsRouter(db));
   app.use('/api/conversations', createConversationsRouter(db));
+  app.use('/api/wisdom', createWisdomRouter(db));
   return app;
 }
